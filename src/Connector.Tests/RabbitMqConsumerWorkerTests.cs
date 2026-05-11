@@ -50,10 +50,10 @@ public class RabbitMqConsumerWorkerTests
     }
 
     [Fact]
-    public async Task Worker_DoesNotThrow_WhenDisposedWithoutStarting()
+    public void Worker_DoesNotThrow_WhenDisposedWithoutStarting()
     {
         var worker = CreateWorker();
-        var exception = await Record.ExceptionAsync(() => worker.DisposeAsync().AsTask());
+        var exception = Record.Exception(() => worker.Dispose());
         Assert.Null(exception);
     }
 

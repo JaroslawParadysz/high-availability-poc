@@ -136,12 +136,10 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
         return Task.CompletedTask;
     }
 
-    public override async ValueTask DisposeAsync()
+    public override void Dispose()
     {
-        if (_channel is not null)
-            await _channel.DisposeAsync();
-        if (_connection is not null)
-            await _connection.DisposeAsync();
-        await base.DisposeAsync();
+        _channel?.Dispose();
+        _connection?.Dispose();
+        base.Dispose();
     }
 }
