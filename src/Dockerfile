@@ -2,11 +2,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY src/Connector/Connector.csproj src/Connector/
-RUN dotnet restore src/Connector/Connector.csproj
+COPY Connector/Connector.csproj Connector/
+RUN dotnet restore Connector/Connector.csproj
 
-COPY src/Connector/ src/Connector/
-RUN dotnet publish src/Connector/Connector.csproj -c Release -o /app/publish --no-restore
+COPY Connector/ Connector/
+RUN dotnet publish Connector/Connector.csproj -c Release -o /app/publish --no-restore
 
 # Stage 2: runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
