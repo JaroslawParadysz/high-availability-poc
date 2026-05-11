@@ -13,7 +13,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 # Run as non-root for least-privilege.
-RUN addgroup --system connector && adduser --system --ingroup connector connector
+RUN groupadd --system connector && useradd --system --gid connector connector
 USER connector
 
 COPY --from=build /app/publish .
