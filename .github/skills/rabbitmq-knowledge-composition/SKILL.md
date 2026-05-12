@@ -38,6 +38,10 @@ If any required input is missing, state assumptions before proceeding.
 8. Keep guidance incremental and testable; avoid large speculative redesigns.
 9. Anchor implementation guidance to .NET C# patterns: RabbitMQ.Client API, async/await, IConnection/IChannel lifecycle, BackgroundService, and xUnit or NUnit test approaches.
 10. Prefer clear "when to use" and "when to avoid" guidance for each recommendation.
+11. Add source links for factual statements and product capability claims.
+12. Place each source link inline next to the related statement, sentence, bullet, or table cell.
+13. Prefer official sources first (RabbitMQ docs, GitHub RabbitMQ repos, Microsoft docs for Azure/.NET behavior).
+14. If no trustworthy source is available, mark the statement as an assumption instead of presenting it as fact.
 
 ## Procedure
 1. Restate the objective in one sentence.
@@ -63,9 +67,10 @@ If any required input is missing, state assumptions before proceeding.
    - What to do by default
    - What to avoid (for example, sharing channels across threads, blocking async calls)
    - Common pitfalls in production .NET services
-8. Provide tradeoffs and a practical recommendation.
-9. Add concrete validation checks (fault-injection or xUnit/NUnit tests).
-10. End with open questions and next decisions.
+8. Add source links inline for factual claims and capability statements in all sections.
+9. Provide tradeoffs and a practical recommendation.
+10. Add concrete validation checks (fault-injection or xUnit/NUnit tests).
+11. End with open questions and next decisions.
 
 ## Output Template
 1. Objective
@@ -79,6 +84,14 @@ If any required input is missing, state assumptions before proceeding.
 9. Recommendation
 10. Validation Plan (fault-injection and xUnit/NUnit tests)
 11. Open Questions
+12. Sources (optional rollup list; do not replace inline links)
+
+## Citation Rules
+- Every factual claim should have a source link adjacent to that claim.
+- Keep links in the same line or bullet where the claim appears.
+- In tables, place links in the same cell as the claim.
+- Use stable documentation links over blog summaries when possible.
+- If a recommendation is opinionated, cite the supporting fact and label the recommendation as judgment.
 
 ## Quality Checklist
 - Does the document state assumptions explicitly?
@@ -89,6 +102,8 @@ If any required input is missing, state assumptions before proceeding.
 - Are tradeoffs balanced instead of one-sided?
 - Is the recommendation actionable and testable with xUnit or NUnit?
 - Are unknowns and risks visible?
+- Do factual claims and capability statements include inline source links?
+- Are official docs preferred where available?
 
 ## Optional Depth Modes
 - Quick: concise concept explanation, one .NET C# implementation approach, top risks, and one recommendation.
