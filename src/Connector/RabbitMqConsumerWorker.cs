@@ -1,26 +1,31 @@
 using System.Text;
 using Microsoft.Extensions.Options;
-using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
 namespace Connector;
 
 /// <summary>
 /// Background worker that consumes messages from RabbitMQ.
+/// Delegates connection management to IRabbitMqConnectionProvider.
+/// Delegates business logic to IMessageHandler.
 /// Each message is acknowledged only after successful processing (at-least-once delivery).
 /// </summary>
 public sealed class RabbitMqConsumerWorker : BackgroundService
 {
     private readonly ILogger<RabbitMqConsumerWorker> _logger;
+    private readonly IRabbitMqConnectionProvider _connectionProvider;
+    private readonly IMessageHandler _messageHandler;
     private readonly RabbitMqOptions _options;
-    private IConnection? _connection;
-    private IChannel? _channel;
 
     public RabbitMqConsumerWorker(
         ILogger<RabbitMqConsumerWorker> logger,
+        IRabbitMqConnectionProvider connectionProvider,
+        IMessageHandler messageHandler,
         IOptions<RabbitMqOptions> options)
     {
         _logger = logger;
+        _connectionProvider = connectionProvider;
+        _messageHandler = messageHandler;
         _options = options.Value;
     }
 
@@ -28,75 +33,64 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
     {
         _logger.LogInformation("Connector starting. Queue={Queue}", _options.QueueName);
 
-        await ConnectWithRetryAsync(stoppingToken);
-
-        // Keep alive until cancellation; reconnect on unexpected disconnect.
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            if (_connection is null || !_connection.IsOpen)
+            while (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogWarning("RabbitMQ connection lost. Reconnecting…");
-                await ConnectWithRetryAsync(stoppingToken);
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-        }
-    }
-
-    private async Task ConnectWithRetryAsync(CancellationToken ct)
-    {
-        int attempt = 0;
-        while (!ct.IsCancellationRequested)
-        {
-            attempt++;
-            try
-            {
-                var factory = new ConnectionFactory
+                try
                 {
-                    HostName = _options.Host,
-                    Port = _options.Port,
-                    VirtualHost = _options.VirtualHost,
-                    UserName = _options.Username,
-                    Password = _options.Password,
-                    // Enforce TLS for all external connections.
-                    Ssl = new SslOption
-                    {
-                        Enabled = _options.Port == 5671,
-                        ServerName = _options.Host,
-                    },
-                };
+                    var channel = await _connectionProvider.GetChannelAsync(stoppingToken);
+                    var consumer = new AsyncEventingBasicConsumer(channel);
+                    consumer.ReceivedAsync += (sender, ea) =>
+                        OnMessageReceivedAsync(channel, ea, stoppingToken);
 
-                _connection = await factory.CreateConnectionAsync(ct);
-                _channel = await _connection.CreateChannelAsync(cancellationToken: ct);
+                    await channel.BasicConsumeAsync(
+                        queue: _options.QueueName,
+                        autoAck: false,
+                        consumerTag: "",
+                        noLocal: false,
+                        exclusive: false,
+                        arguments: null,
+                        consumer: consumer,
+                        cancellationToken: stoppingToken);
 
-                await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 10, global: false, ct);
+                    _logger.LogInformation(
+                        "Consumer started. Queue={Queue}",
+                        _options.QueueName);
 
-                await _channel.QueueDeclarePassiveAsync(_options.QueueName, ct);
-
-                var consumer = new AsyncEventingBasicConsumer(_channel);
-                consumer.ReceivedAsync += OnMessageReceivedAsync;
-
-                await _channel.BasicConsumeAsync(_options.QueueName, autoAck: false, consumer, ct);
-
-                _logger.LogInformation(
-                    "Connected to RabbitMQ. Host={Host} Queue={Queue}",
-                    _options.Host, _options.QueueName);
-                return;
+                    // Keep consumer alive until cancellation or unexpected error.
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogInformation("Connector cancellation requested.");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Consumer loop failed. Retrying in 5 seconds...");
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                }
             }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
-            {
-                var delay = TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, attempt)));
-                _logger.LogError(ex,
-                    "Failed to connect to RabbitMQ (attempt {Attempt}). Retrying in {Delay}s.",
-                    attempt, delay.TotalSeconds);
-                await Task.Delay(delay, ct);
-            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Connector stopped.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Connector execution failed.");
+            throw;
         }
     }
 
-    private async Task OnMessageReceivedAsync(object sender, BasicDeliverEventArgs ea)
+    private async Task OnMessageReceivedAsync(
+        RabbitMQ.Client.IChannel channel,
+        BasicDeliverEventArgs ea,
+        CancellationToken stoppingToken)
     {
-        var correlationId = ea.BasicProperties.CorrelationId ?? Guid.NewGuid().ToString();
+        var correlationId = ea.BasicProperties?.CorrelationId ?? Guid.NewGuid().ToString();
         using var scope = _logger.BeginScope(new Dictionary<string, object>
         {
             ["CorrelationId"] = correlationId,
@@ -108,38 +102,31 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
             var body = Encoding.UTF8.GetString(ea.Body.Span);
             _logger.LogInformation("Message received. Size={Size}", ea.Body.Length);
 
-            await ProcessMessageAsync(body, correlationId);
+            // Delegate to business logic handler.
+            await _messageHandler.HandleAsync(body, correlationId, stoppingToken);
 
-            if (_channel is not null)
-                await _channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
-
+            // Acknowledge only after successful processing.
+            await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
             _logger.LogInformation("Message acknowledged.");
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Message processing cancelled.");
+            // Nack to requeue for later retries.
+            await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Message processing failed. Sending to dead-letter.");
-
-            if (_channel is not null)
-                // requeue: false → routes to dead-letter exchange if configured.
-                await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+            // Nack with requeue: false → routes to dead-letter exchange if configured.
+            await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
         }
-    }
-
-    /// <summary>
-    /// Placeholder for the full consume → persist → publish pipeline.
-    /// Replace with actual DB write (outbox) and MQTT publish steps.
-    /// </summary>
-    private Task ProcessMessageAsync(string body, string correlationId)
-    {
-        _logger.LogDebug("Processing message. CorrelationId={CorrelationId} Body={Body}",
-            correlationId, body);
-        return Task.CompletedTask;
     }
 
     public override void Dispose()
     {
-        _channel?.Dispose();
-        _connection?.Dispose();
+        _logger.LogInformation("Disposing consumer worker.");
+        _connectionProvider.DisposeAsync().GetAwaiter().GetResult();
         base.Dispose();
     }
 }
