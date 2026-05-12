@@ -23,7 +23,7 @@ Provide a beginner-friendly reference for understanding RabbitMQ core concepts a
 | A4 | Consumer workers run as Azure Container Apps replicas in a multi-zone environment. | [ADR 0001](adr/0001-compute-platform-selection.md) |
 | A5 | The RabbitMQ broker runs version 3.12 or later (quorum queues and streams available). **Assumption** — validate with broker operator. | — |
 | A6 | TLS is required for all broker connections; port 5671 signals TLS-enabled connections. | [architecture-concept.md](architecture-concept.md) |
-| A7 | Credentials and connection strings are never hard-coded; they are supplied via environment variables or Azure Key Vault secret references. | Project security baseline |
+| A7 | Credentials and connection strings are never hard-coded; they are supplied via environment variables or Azure Key Vault secret references. | [Azure Container Apps — Manage secrets](https://learn.microsoft.com/azure/container-apps/manage-secrets); [Azure Key Vault overview](https://learn.microsoft.com/azure/key-vault/general/overview) |
 
 **Unknowns that affect design:**
 
