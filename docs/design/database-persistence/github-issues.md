@@ -5,6 +5,30 @@ _ADRs: 0002, 0003, 0004_
 
 ---
 
+## Issue 0 — [Epic] Database persistence for Connector
+**Labels**: `epic`
+
+Implements database persistence for the Connector service.
+
+Every consumed RabbitMQ message will be durably persisted to PostgreSQL with full idempotency, duplicate tracking, and resilient retry handling.
+
+**Design**: `docs/design/database-persistence/concept.md`
+**ADRs**: 0002 (persistence store), 0003 (idempotency & duplicates), 0004 (retry & failure classification)
+
+### Tasks
+- [ ] #1 [Infra] Add PostgreSQL to docker-compose
+- [ ] #2 [DB] Create EF Core DbContext, entities, and initial migration
+- [ ] #3 [Config] Externalize DB connection string and retry configuration
+- [ ] #4 [Feature] Reject messages missing correlation ID
+- [ ] #5 [Feature] Implement TransientPersistenceException and retry-cap logic
+- [ ] #6 [Feature] Implement CommunicationLogHandler
+- [ ] #7 [Infra] Add PostgreSQL health check to the connector
+- [ ] #8 [Test] Unit and integration tests for the persistence layer
+
+> Create this issue first. After creating issues 1–8, update the task list above with the actual issue numbers.
+
+---
+
 ## Issue 1 — [Infra] Add PostgreSQL to docker-compose
 **Labels**: `infrastructure`, `database`
 
@@ -130,7 +154,9 @@ All 19 existing tests must continue to pass.
 ---
 
 ## Suggested creation order
-1 → 2 → 5 → 4 → 3 → 6 → 7 → 8
+0 (epic) → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+
+After creating issues 1–8, edit the epic (Issue 0) task list to replace placeholder numbers with actual GitHub issue numbers.
 
 Dependencies:
 - Issue 3 depends on Issue 2 (DbContext) and Issue 4 (TransientPersistenceException)
