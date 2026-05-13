@@ -39,10 +39,10 @@ Example:
 
 ```bash
 export POSTGRES_USER=connector_dev
-export POSTGRES_PASSWORD=your_secure_password_here
+export POSTGRES_PASSWORD=your_postgres_password
 export POSTGRES_DB=connector
 export RABBITMQ_DEFAULT_USER=connector_rabbit
-export RABBITMQ_DEFAULT_PASS=your_secure_password_here
+export RABBITMQ_DEFAULT_PASS=your_rabbitmq_password
 ```
 
 Then run:
