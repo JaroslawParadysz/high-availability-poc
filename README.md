@@ -24,3 +24,33 @@ Concept and architecture decisions only.
 ## Next Action
 
 Review open questions in docs/architecture-concept.md and confirm constraints so we can lock the target architecture.
+
+## Local development (Docker Compose)
+
+Set the required environment variables before starting containers:
+
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_DB`
+- `RABBITMQ_DEFAULT_USER`
+- `RABBITMQ_DEFAULT_PASS`
+
+Example:
+
+```bash
+export POSTGRES_USER=connector_dev
+export POSTGRES_PASSWORD=your_postgres_password
+export POSTGRES_DB=connector
+export RABBITMQ_DEFAULT_USER=connector_rabbit
+export RABBITMQ_DEFAULT_PASS=your_rabbitmq_password
+```
+
+Then run:
+
+`docker compose up -d --build`
+
+Verify health checks are passing:
+
+`docker compose ps`
+
+> This setup is intended for local development. Do not use plaintext credentials in production environments.
