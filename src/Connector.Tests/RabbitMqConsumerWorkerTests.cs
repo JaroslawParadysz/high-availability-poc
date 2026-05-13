@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
+using Connector.Domain.Entities;
+using Connector.Infrastructure.Persistence;
 using Moq;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
@@ -314,5 +317,43 @@ public class RabbitMqHealthCheckTests
         Assert.Equal(
             Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy,
             result.Status);
+    }
+}
+
+public class ConnectorDbContextModelTests
+{
+    [Fact]
+    public void CommunicationLog_HasExpectedIndexes()
+    {
+        var options = new DbContextOptionsBuilder<ConnectorDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=test;Password=test")
+            .Options;
+
+        using var context = new ConnectorDbContext(options);
+        var entityType = context.Model.FindEntityType(typeof(CommunicationLog));
+
+        Assert.NotNull(entityType);
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.Properties.Any(property => property.Name == nameof(CommunicationLog.CorrelationId)) &&
+            index.IsUnique);
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.Properties.Any(property => property.Name == nameof(CommunicationLog.ReceivedAt)));
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.Properties.Any(property => property.Name == nameof(CommunicationLog.Status)));
+    }
+
+    [Fact]
+    public void DuplicateEvent_HasCorrelationIdIndex()
+    {
+        var options = new DbContextOptionsBuilder<ConnectorDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=test;Password=test")
+            .Options;
+
+        using var context = new ConnectorDbContext(options);
+        var entityType = context.Model.FindEntityType(typeof(DuplicateEvent));
+
+        Assert.NotNull(entityType);
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.Properties.Any(property => property.Name == nameof(DuplicateEvent.CorrelationId)));
     }
 }
