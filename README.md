@@ -47,7 +47,7 @@ export RABBITMQ_DEFAULT_PASS=your_rabbitmq_password
 
 Then run:
 
-`docker compose up -d`
+`docker compose up -d --build`
 
 Verify health checks are passing:
 
