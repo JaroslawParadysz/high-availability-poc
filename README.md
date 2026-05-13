@@ -49,4 +49,8 @@ Then run:
 
 `docker compose up -d`
 
+Verify health checks are passing:
+
+`docker compose ps`
+
 > This setup is intended for local development. Do not use plaintext credentials in production environments.
