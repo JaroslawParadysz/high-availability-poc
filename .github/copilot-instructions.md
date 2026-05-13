@@ -77,3 +77,7 @@ This workspace is for designing and implementing a high-availability connector c
 	- concrete next decisions.
 - For implementation tasks, include test strategy and operational impact.
 - Avoid broad rewrites unless explicitly requested.
+
+## Agent Mode for C# Implementation
+- For all C# implementation tasks in this repository, use the **Expert .NET software engineer mode instructions** agent.
+- This applies to any task involving source code under `src/`, including new features, refactoring, tests, and bug fixes.
