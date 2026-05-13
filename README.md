@@ -27,7 +27,7 @@ Review open questions in docs/architecture-concept.md and confirm constraints so
 
 ## Local development (Docker Compose)
 
-Set the PostgreSQL variables before starting containers:
+Set the required environment variables before starting containers:
 
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
