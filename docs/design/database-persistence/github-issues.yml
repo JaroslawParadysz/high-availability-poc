@@ -1,0 +1,257 @@
+# Machine-readable issue definitions for the database persistence feature.
+# Used by: .github/workflows/create-issues-from-markdown.yml
+#
+# Schema:
+#   issues[].id    - file-local ID; used as {N} placeholders in the epic body
+#   issues[].title - issue title
+#   issues[].labels - list of label names (created automatically if missing)
+#   issues[].body  - issue body (markdown)
+#   epic           - created last; use {N} in body to insert the actual GitHub issue number for id N
+
+issues:
+
+  - id: 1
+    title: "[Infra] Add PostgreSQL to docker-compose"
+    labels: [infrastructure, database]
+    body: |
+      ## Summary
+      Add a PostgreSQL 15+ container to `docker-compose.yml` so the connector has a local database for development and testing.
+
+      ## Tasks
+      - Add PostgreSQL 15+ service with a named volume for data persistence
+      - Add a health check using `pg_isready`
+      - Expose `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` as environment variables
+      - Expose the connection string as an env var consumed by the connector service
+      - Add `depends_on` with `condition: service_healthy` to the connector service
+
+      ## Acceptance criteria
+      - `docker-compose up -d` starts both RabbitMQ and PostgreSQL
+      - PostgreSQL health check passes before the connector starts
+      - No hardcoded credentials — values come from environment variables
+
+      ## References
+      - ADR 0002: `docs/adr/0002-persistence-store-selection.md`
+
+  - id: 2
+    title: "[DB] Create EF Core DbContext, entities, and initial migration"
+    labels: [database, ef-core]
+    body: |
+      ## Summary
+      Create `ConnectorDbContext` with two entity types and an initial migration that produces the `communication_log` and `duplicate_events` tables.
+
+      ## Tasks
+      - Create `CommunicationLog` entity:
+        - `Id` (int, PK)
+        - `CorrelationId` (Guid, unique)
+        - `MessageBody` (string, required)
+        - `ReceivedAt` (DateTime, default now)
+        - `HandledAt` (DateTime, required)
+        - `Status` (string: `'processed'` / `'failed'`)
+        - `ErrorMessage` (string, nullable)
+        - `SourceQueue` (string, nullable)
+      - Create `DuplicateEvent` entity:
+        - `Id` (int, PK)
+        - `CorrelationId` (Guid)
+        - `ReceivedAt` (DateTime, default now)
+        - `SourceQueue` (string, nullable)
+      - Configure indexes: unique on `communication_log.correlation_id`, on `received_at`, `status`, and `duplicate_events.correlation_id`
+      - Generate and commit the initial EF Core migration
+      - Register `NpgsqlDataSource` (singleton) and `ConnectorDbContext` (scoped) in `Program.cs`
+      - Call `await context.Database.MigrateAsync()` at startup
+
+      ## Acceptance criteria
+      - `dotnet ef migrations list` shows the initial migration
+      - Running the connector against a fresh PostgreSQL applies the migration automatically
+      - Both tables exist with correct columns and indexes after migration
+
+      ## References
+      - ADR 0002: `docs/adr/0002-persistence-store-selection.md`
+      - ADR 0003: `docs/adr/0003-idempotency-and-duplicate-tracking.md`
+
+  - id: 3
+    title: "[Config] Externalize DB connection string and retry configuration"
+    labels: [configuration]
+    body: |
+      ## Summary
+      Ensure all database-related configuration is externalized via the options pattern. No hardcoded values anywhere in source code.
+
+      ## Configuration keys
+      | Key | Type | Description |
+      |-----|------|-------------|
+      | `ConnectionStrings:Postgres` | string | Npgsql connection string |
+      | `Persistence:CommandTimeoutSeconds` | int | EF Core command timeout |
+      | `Persistence:MaxRetryCount` | int | Retry cap for `x-delivery-count` check |
+
+      ## Tasks
+      - Create `PersistenceOptions` class bound to the `Persistence` config section
+      - Register via `services.Configure<PersistenceOptions>(...)` in `Program.cs`
+      - Document all keys in `appsettings.json` with placeholder values and inline comments
+      - Pass `ConnectionStrings__Postgres` as an environment variable in `docker-compose.yml`
+
+      ## Acceptance criteria
+      - Connector starts correctly when `ConnectionStrings:Postgres` is provided via env var
+      - No connection string or numeric retry value appears as a literal in source code
+
+      ## References
+      - ADR 0002: `docs/adr/0002-persistence-store-selection.md`
+      - ADR 0004: `docs/adr/0004-retry-and-failure-classification.md`
+
+  - id: 4
+    title: "[Feature] Reject messages missing correlation ID"
+    labels: [feature, reliability]
+    body: |
+      ## Summary
+      Messages without a `CorrelationId` must be rejected immediately (NACK → DLQ) rather than silently generating a random GUID, which would break deduplication on retry.
+
+      ## Tasks
+      - In `RabbitMqConsumerWorker.OnMessageReceivedAsync`, **before** dispatching to `IMessageHandler`:
+        - Check if `ea.BasicProperties?.CorrelationId` is null or whitespace
+        - If missing: `await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false)`
+        - Log: `LogWarning("Message rejected: missing correlation ID. DeliveryTag={DeliveryTag}", ea.DeliveryTag)`
+      - Remove the existing `?? Guid.NewGuid().ToString()` fallback
+
+      ## Acceptance criteria
+      - A message without `CorrelationId` is NACKed with `requeue: false`
+      - A warning log entry is emitted for every rejected message
+      - Messages with a valid `CorrelationId` are unaffected
+      - Existing tests pass; new unit test added for the missing correlation ID case
+
+      ## References
+      - ADR 0003: `docs/adr/0003-idempotency-and-duplicate-tracking.md`
+
+  - id: 5
+    title: "[Feature] Implement TransientPersistenceException and retry-cap logic"
+    labels: [feature, reliability]
+    body: |
+      ## Summary
+      Add explicit transient/permanent error classification for DB failures and implement retry-cap logic using the built-in `x-delivery-count` RabbitMQ header.
+
+      ## Tasks
+      - Create `TransientPersistenceException` (inherits `Exception`)
+      - In `RabbitMqConsumerWorker.OnMessageReceivedAsync`, add a catch block **before** the generic `Exception` catch:
+        - Catch `TransientPersistenceException`
+        - Read `x-delivery-count` header from `ea.BasicProperties.Headers`
+        - If count < `PersistenceOptions.MaxRetryCount`: NACK `requeue: true`; log correlation ID and delivery count
+        - If count >= `MaxRetryCount`: NACK `requeue: false` → DLQ; log warning
+      - Existing `Exception` catch remains unchanged (NACK `requeue: false`)
+
+      ## Acceptance criteria
+      - Transient failure below cap → message requeued
+      - Transient failure at or above cap → message dead-lettered
+      - Permanent failure → message dead-lettered immediately (existing behaviour)
+      - `MaxRetryCount` read from `PersistenceOptions` (no hardcoded value)
+      - Unit tests added for both retry and cap-exceeded paths
+
+      ## Dependencies
+      - Depends on #3
+
+      ## References
+      - ADR 0004: `docs/adr/0004-retry-and-failure-classification.md`
+
+  - id: 6
+    title: "[Feature] Implement CommunicationLogHandler"
+    labels: [feature, database]
+    body: |
+      ## Summary
+      Replace `DefaultMessageHandler` with `CommunicationLogHandler` that persists every consumed message to PostgreSQL with full idempotency and duplicate tracking.
+
+      ## Tasks
+      - Create `CommunicationLogHandler` implementing `IMessageHandler` in `Messaging/Handlers/`
+      - Inject `IServiceScopeFactory` — resolve `ConnectorDbContext` per message (scope-per-message pattern per ADR 0002)
+      - Inject `IOptions<RabbitMqOptions>` to populate `SourceQueue`
+      - Happy path: insert into `communication_log` with `Status = "processed"`, `HandledAt = DateTime.UtcNow`
+      - On `ON CONFLICT (correlation_id)`: insert into `duplicate_events` within the same DB transaction
+      - On any exception: insert into `communication_log` with `Status = "failed"`, `ErrorMessage` populated; rethrow
+      - Catch `NpgsqlException` where `IsTransient == true`; wrap and throw `TransientPersistenceException`
+      - Register `CommunicationLogHandler` as `IMessageHandler` in `Program.cs`; remove `DefaultMessageHandler` registration
+
+      ## Acceptance criteria
+      - Every consumed message appears in `communication_log` within 100 ms
+      - Duplicate messages (same `CorrelationId`) produce a row in `duplicate_events`, not a second row in `communication_log`
+      - Failed messages appear in `communication_log` with `status = 'failed'` and `error_message` populated
+      - Transient Npgsql errors surface as `TransientPersistenceException`
+      - All existing tests pass
+
+      ## Dependencies
+      - Depends on #2
+      - Depends on #3
+      - Depends on #5
+
+      ## References
+      - ADR 0002: `docs/adr/0002-persistence-store-selection.md`
+      - ADR 0003: `docs/adr/0003-idempotency-and-duplicate-tracking.md`
+
+  - id: 7
+    title: "[Infra] Add PostgreSQL health check to the connector"
+    labels: [infrastructure, observability]
+    body: |
+      ## Summary
+      The connector must report `Unhealthy` when PostgreSQL is unreachable so orchestrators and operators are alerted promptly.
+
+      ## Tasks
+      - Add NuGet package `AspNetCore.HealthChecks.Npgsql`
+      - Register the Npgsql health check in `Program.cs` using `ConnectionStrings:Postgres`
+      - Expose health check results via an HTTP endpoint (add one if not already present)
+
+      ## Acceptance criteria
+      - `GET /healthz` (or equivalent) returns `Healthy` when PostgreSQL is reachable
+      - `GET /healthz` returns `Unhealthy` when PostgreSQL is stopped
+      - No new hardcoded connection strings
+
+      ## Dependencies
+      - Depends on #1
+
+      ## References
+      - ADR 0002: `docs/adr/0002-persistence-store-selection.md`
+
+  - id: 8
+    title: "[Test] Unit and integration tests for the persistence layer"
+    labels: [testing]
+    body: |
+      ## Summary
+      Add unit and integration tests covering the full persistence layer. All 19 existing tests must continue to pass.
+
+      ## Unit tests (no DB required)
+      - `CommunicationLogHandler` — happy path: row inserted as `'processed'`
+      - `CommunicationLogHandler` — transient Npgsql error: `TransientPersistenceException` thrown
+      - `RabbitMqConsumerWorker` — missing correlation ID: NACK called with `requeue: false`
+      - `RabbitMqConsumerWorker` — transient error below cap: NACK with `requeue: true`
+      - `RabbitMqConsumerWorker` — transient error at cap: NACK with `requeue: false`
+
+      ## Integration tests (Testcontainers — real PostgreSQL)
+      - End-to-end: consume message → verify row in `communication_log` with `status = 'processed'`
+      - Duplicate: deliver same message twice → one row in `communication_log` + one row in `duplicate_events`
+      - Failed insert: simulate DB failure → row in `communication_log` with `status = 'failed'`
+
+      ## Acceptance criteria
+      - All 19 existing tests pass
+      - All new tests pass
+      - Integration tests use Testcontainers (no manual DB setup required)
+
+      ## Dependencies
+      - Depends on #2, #4, #5, #6
+
+      ## References
+      - `docs/design/database-persistence/concept.md`
+
+epic:
+  title: "[Epic] Database persistence for Connector"
+  labels: [epic]
+  body: |
+    ## Summary
+    Implements database persistence for the Connector service.
+
+    Every consumed RabbitMQ message will be durably persisted to PostgreSQL with full idempotency, duplicate tracking, and resilient retry handling.
+
+    **Design**: `docs/design/database-persistence/concept.md`
+    **ADRs**: 0002 (persistence store), 0003 (idempotency & duplicates), 0004 (retry & failure classification)
+
+    ## Tasks
+    - [ ] {1} [Infra] Add PostgreSQL to docker-compose
+    - [ ] {2} [DB] Create EF Core DbContext, entities, and initial migration
+    - [ ] {3} [Config] Externalize DB connection string and retry configuration
+    - [ ] {4} [Feature] Reject messages missing correlation ID
+    - [ ] {5} [Feature] Implement TransientPersistenceException and retry-cap logic
+    - [ ] {6} [Feature] Implement CommunicationLogHandler
+    - [ ] {7} [Infra] Add PostgreSQL health check to the connector
+    - [ ] {8} [Test] Unit and integration tests for the persistence layer

@@ -1,0 +1,126 @@
+name: Create GitHub issues from YAML
+
+on:
+  workflow_dispatch:
+    inputs:
+      issues_file:
+        description: "Path to issues YAML file (e.g. docs/design/database-persistence/github-issues.yml)"
+        required: true
+        type: string
+
+permissions:
+  issues: write
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install js-yaml
+        run: npm install js-yaml
+
+      - name: Create issues and epic
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const yaml = require('./node_modules/js-yaml');
+
+            // ── Load YAML ────────────────────────────────────────────────────────
+            const filePath = `${process.env.GITHUB_WORKSPACE}/${{ inputs.issues_file }}`;
+            if (!fs.existsSync(filePath)) {
+              core.setFailed(`File not found: ${filePath}`);
+              return;
+            }
+            const def = yaml.load(fs.readFileSync(filePath, 'utf8'));
+
+            if (!def.issues?.length) {
+              core.setFailed('No issues[] found in the YAML file.');
+              return;
+            }
+
+            // ── Label colours (created automatically when missing) ───────────────
+            const labelColors = {
+              epic:           '7057ff',
+              infrastructure: '0075ca',
+              database:       'e4e669',
+              'ef-core':      '0e8a16',
+              feature:        'a2eeef',
+              reliability:    'd93f0b',
+              observability:  'fbca04',
+              configuration:  'cfd3d7',
+              testing:        '0e8a16',
+            };
+            const defaultColor = 'ededed';
+
+            const allLabels = [...new Set([
+              ...def.issues.flatMap(i => i.labels ?? []),
+              ...(def.epic?.labels ?? []),
+            ])];
+
+            for (const label of allLabels) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  name:  label,
+                  color: labelColors[label] ?? defaultColor,
+                });
+                core.info(`Label created: ${label}`);
+              } catch (e) {
+                if (e.status === 422) {
+                  core.info(`Label already exists: ${label}`);
+                } else {
+                  throw e;
+                }
+              }
+            }
+
+            // ── Create regular issues in id order ────────────────────────────────
+            const sorted = [...def.issues].sort((a, b) => a.id - b.id);
+            const idToGhNumber = {};
+            const summaryRows  = [['File id', 'GitHub #', 'Title']];
+
+            for (const issue of sorted) {
+              const result = await github.rest.issues.create({
+                owner:  context.repo.owner,
+                repo:   context.repo.repo,
+                title:  issue.title,
+                body:   issue.body ?? '',
+                labels: issue.labels ?? [],
+              });
+              idToGhNumber[issue.id] = result.data.number;
+              summaryRows.push([`${issue.id}`, `#${result.data.number}`, issue.title]);
+              core.info(`Created #${result.data.number}: ${issue.title}`);
+            }
+
+            // ── Create epic with real issue numbers ──────────────────────────────
+            if (def.epic) {
+              // Replace {N} placeholders with actual GitHub issue numbers.
+              // Sort descending to avoid {1} matching inside {10}.
+              let epicBody = def.epic.body ?? '';
+              const entries = Object.entries(idToGhNumber)
+                .sort(([a], [b]) => parseInt(b, 10) - parseInt(a, 10));
+              for (const [id, ghNum] of entries) {
+                epicBody = epicBody.replace(new RegExp(`\\{${id}\\}`, 'g'), `#${ghNum}`);
+              }
+
+              const epicResult = await github.rest.issues.create({
+                owner:  context.repo.owner,
+                repo:   context.repo.repo,
+                title:  def.epic.title,
+                body:   epicBody,
+                labels: def.epic.labels ?? [],
+              });
+              summaryRows.push([`epic`, `#${epicResult.data.number}`, def.epic.title]);
+              core.info(`Created epic #${epicResult.data.number}: ${def.epic.title}`);
+            }
+
+            // ── Job summary ──────────────────────────────────────────────────────
+            await core.summary
+              .addHeading('Issues created')
+              .addTable(summaryRows.map((row, i) =>
+                i === 0 ? row.map(h => ({ data: h, header: true })) : row
+              ))
+              .write();
