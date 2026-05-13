@@ -24,3 +24,15 @@ Concept and architecture decisions only.
 ## Next Action
 
 Review open questions in docs/architecture-concept.md and confirm constraints so we can lock the target architecture.
+
+## Local development (Docker Compose)
+
+Set the PostgreSQL variables before starting containers:
+
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_DB`
+
+Then run:
+
+`docker compose up -d`
