@@ -33,6 +33,16 @@ Set the PostgreSQL variables before starting containers:
 - `POSTGRES_PASSWORD`
 - `POSTGRES_DB`
 
+Example:
+
+```bash
+export POSTGRES_USER=connector_dev
+export POSTGRES_PASSWORD=change_me
+export POSTGRES_DB=connector
+```
+
 Then run:
 
 `docker compose up -d`
+
+> This setup is intended for local development. Do not use plaintext credentials in production environments.
