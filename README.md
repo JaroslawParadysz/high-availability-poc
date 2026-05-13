@@ -32,13 +32,17 @@ Set the PostgreSQL variables before starting containers:
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 - `POSTGRES_DB`
+- `RABBITMQ_DEFAULT_USER`
+- `RABBITMQ_DEFAULT_PASS`
 
 Example:
 
 ```bash
 export POSTGRES_USER=connector_dev
-export POSTGRES_PASSWORD=change_me
+export POSTGRES_PASSWORD=your_secure_password_here
 export POSTGRES_DB=connector
+export RABBITMQ_DEFAULT_USER=connector_rabbit
+export RABBITMQ_DEFAULT_PASS=your_secure_password_here
 ```
 
 Then run:
