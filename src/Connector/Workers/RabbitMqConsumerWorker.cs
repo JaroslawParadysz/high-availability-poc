@@ -132,7 +132,7 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
         {
             var deliveryCount = GetDeliveryCount(ea.BasicProperties?.Headers);
             var maxRetryCount = _persistenceOptions.MaxRetryCount
-                ?? throw new InvalidOperationException("Persistence MaxRetryCount must be configured.");
+                ?? throw new InvalidOperationException("PersistenceOptions.MaxRetryCount must be configured in application settings.");
 
             if (deliveryCount < maxRetryCount)
             {
