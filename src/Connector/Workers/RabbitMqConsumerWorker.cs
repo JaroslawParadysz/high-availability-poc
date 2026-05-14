@@ -16,17 +16,20 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
     private readonly IRabbitMqConnectionProvider _connectionProvider;
     private readonly IMessageHandler _messageHandler;
     private readonly RabbitMqOptions _options;
+    private readonly PersistenceOptions _persistenceOptions;
 
     public RabbitMqConsumerWorker(
         ILogger<RabbitMqConsumerWorker> logger,
         IRabbitMqConnectionProvider connectionProvider,
         IMessageHandler messageHandler,
-        IOptions<RabbitMqOptions> options)
+        IOptions<RabbitMqOptions> options,
+        IOptions<PersistenceOptions> persistenceOptions)
     {
         _logger = logger;
         _connectionProvider = connectionProvider;
         _messageHandler = messageHandler;
         _options = options.Value;
+        _persistenceOptions = persistenceOptions.Value;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -125,12 +128,60 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
             // Nack to requeue for later retries.
             await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
         }
+        catch (TransientPersistenceException ex)
+        {
+            var deliveryCount = GetDeliveryCount(ea.BasicProperties?.Headers);
+            var maxRetryCount = _persistenceOptions.MaxRetryCount ?? 0;
+
+            if (deliveryCount < maxRetryCount)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Transient persistence failure. Requeuing message. CorrelationId={CorrelationId} DeliveryCount={DeliveryCount} MaxRetryCount={MaxRetryCount}",
+                    correlationId,
+                    deliveryCount,
+                    maxRetryCount);
+                await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
+                return;
+            }
+
+            _logger.LogWarning(
+                ex,
+                "Transient persistence failure reached retry cap. Dead-lettering message. CorrelationId={CorrelationId} DeliveryCount={DeliveryCount} MaxRetryCount={MaxRetryCount}",
+                correlationId,
+                deliveryCount,
+                maxRetryCount);
+            await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Message processing failed. Sending to dead-letter.");
             // Nack with requeue: false → routes to dead-letter exchange if configured.
             await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
         }
+    }
+
+    private static int GetDeliveryCount(IDictionary<string, object?>? headers)
+    {
+        if (headers is null
+            || !headers.TryGetValue("x-delivery-count", out var headerValue)
+            || headerValue is null)
+        {
+            return 0;
+        }
+
+        return headerValue switch
+        {
+            byte value => value,
+            sbyte value => value < 0 ? 0 : value,
+            short value => value < 0 ? 0 : value,
+            ushort value => value,
+            int value => Math.Max(0, value),
+            uint value => (int)Math.Min(value, int.MaxValue),
+            long value => (int)Math.Clamp(value, 0, int.MaxValue),
+            ulong value => (int)Math.Min(value, (ulong)int.MaxValue),
+            _ => 0,
+        };
     }
 
     public override void Dispose()
