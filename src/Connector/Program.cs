@@ -12,6 +12,12 @@ IHost host = Host.CreateDefaultBuilder(args)
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.Configure<PersistenceOptions>(context.Configuration.GetSection("Persistence"));
+        services.AddOptions<PersistenceOptions>()
+            .BindConfiguration("Persistence")
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         services.AddPersistence(context.Configuration);
 
         // Infrastructure: Connection provider with retry policy (Polly).

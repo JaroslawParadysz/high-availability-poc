@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Connector.Infrastructure.Persistence;
@@ -19,9 +20,14 @@ public static class PersistenceServiceCollectionExtensions
         services.AddDbContext<ConnectorDbContext>((serviceProvider, options) =>
         {
             var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
+            var persistenceOptions = serviceProvider.GetRequiredService<IOptions<PersistenceOptions>>().Value;
 
             options
-                .UseNpgsql(dataSource)
+                .UseNpgsql(dataSource, npgsqlOptions =>
+                {
+                    npgsqlOptions.CommandTimeout(persistenceOptions.CommandTimeoutSeconds);
+                    npgsqlOptions.EnableRetryOnFailure(maxRetryCount: persistenceOptions.MaxRetryCount);
+                })
                 .UseSnakeCaseNamingConvention();
         });
 
