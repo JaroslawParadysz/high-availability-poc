@@ -131,7 +131,8 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
         catch (TransientPersistenceException ex)
         {
             var deliveryCount = GetDeliveryCount(ea.BasicProperties?.Headers);
-            var maxRetryCount = _persistenceOptions.MaxRetryCount ?? 0;
+            var maxRetryCount = _persistenceOptions.MaxRetryCount
+                ?? throw new InvalidOperationException("Persistence MaxRetryCount must be configured.");
 
             if (deliveryCount < maxRetryCount)
             {
@@ -142,16 +143,17 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
                     deliveryCount,
                     maxRetryCount);
                 await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
-                return;
             }
-
-            _logger.LogWarning(
-                ex,
-                "Transient persistence failure reached retry cap. Dead-lettering message. CorrelationId={CorrelationId} DeliveryCount={DeliveryCount} MaxRetryCount={MaxRetryCount}",
-                correlationId,
-                deliveryCount,
-                maxRetryCount);
-            await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+            else
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Transient persistence failure reached retry cap. Dead-lettering message. CorrelationId={CorrelationId} DeliveryCount={DeliveryCount} MaxRetryCount={MaxRetryCount}",
+                    correlationId,
+                    deliveryCount,
+                    maxRetryCount);
+                await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+            }
         }
         catch (Exception ex)
         {
@@ -179,7 +181,7 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
             int value => Math.Max(0, value),
             uint value => (int)Math.Min(value, int.MaxValue),
             long value => (int)Math.Clamp(value, 0, int.MaxValue),
-            ulong value => (int)Math.Min(value, (ulong)int.MaxValue),
+            ulong value => (int)Math.Min(value, int.MaxValue),
             _ => 0,
         };
     }
