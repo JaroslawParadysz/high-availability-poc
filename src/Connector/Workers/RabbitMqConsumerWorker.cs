@@ -85,12 +85,22 @@ public sealed class RabbitMqConsumerWorker : BackgroundService
         }
     }
 
-    private async Task OnMessageReceivedAsync(
+    internal async Task OnMessageReceivedAsync(
         RabbitMQ.Client.IChannel channel,
         BasicDeliverEventArgs ea,
         CancellationToken stoppingToken)
     {
-        var correlationId = ea.BasicProperties?.CorrelationId ?? Guid.NewGuid().ToString();
+        if (string.IsNullOrWhiteSpace(ea.BasicProperties?.CorrelationId))
+        {
+            _logger.LogWarning(
+                "Message rejected: missing correlation ID. DeliveryTag={DeliveryTag}",
+                ea.DeliveryTag);
+            // Nack with requeue: false so the broker routes the message to the dead-letter exchange.
+            await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+            return;
+        }
+
+        var correlationId = ea.BasicProperties.CorrelationId;
         using var scope = _logger.BeginScope(new Dictionary<string, object>
         {
             ["CorrelationId"] = correlationId,
