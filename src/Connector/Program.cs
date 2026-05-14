@@ -1,5 +1,6 @@
 using Connector;
-using Microsoft.Extensions.Options;
+using Connector.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((context, services) =>
@@ -10,6 +11,8 @@ IHost host = Host.CreateDefaultBuilder(args)
             .BindConfiguration("RabbitMq")
             .ValidateDataAnnotations()
             .ValidateOnStart();
+
+        services.AddPersistence(context.Configuration);
 
         // Infrastructure: Connection provider with retry policy (Polly).
         services.AddSingleton<IRabbitMqConnectionProvider, RabbitMqConnectionProvider>();
@@ -28,5 +31,11 @@ IHost host = Host.CreateDefaultBuilder(args)
             .AddCheck<RabbitMqHealthCheck>("rabbitmq");
     })
     .Build();
+
+using (var scope = host.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<ConnectorDbContext>();
+    await dbContext.Database.MigrateAsync();
+}
 
 await host.RunAsync();
