@@ -21,12 +21,16 @@ public static class PersistenceServiceCollectionExtensions
         {
             var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
             var persistenceOptions = serviceProvider.GetRequiredService<IOptions<PersistenceOptions>>().Value;
+            var commandTimeoutSeconds = persistenceOptions.CommandTimeoutSeconds
+                ?? throw new InvalidOperationException("Persistence:CommandTimeoutSeconds is not configured.");
+            var maxRetryCount = persistenceOptions.MaxRetryCount
+                ?? throw new InvalidOperationException("Persistence:MaxRetryCount is not configured.");
 
             options
                 .UseNpgsql(dataSource, npgsqlOptions =>
                 {
-                    npgsqlOptions.CommandTimeout(persistenceOptions.CommandTimeoutSeconds);
-                    npgsqlOptions.EnableRetryOnFailure(maxRetryCount: persistenceOptions.MaxRetryCount);
+                    npgsqlOptions.CommandTimeout(commandTimeoutSeconds);
+                    npgsqlOptions.EnableRetryOnFailure(maxRetryCount: maxRetryCount);
                 })
                 .UseSnakeCaseNamingConvention();
         });

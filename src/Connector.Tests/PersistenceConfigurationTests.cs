@@ -11,12 +11,12 @@ namespace Connector.Tests;
 public class PersistenceOptionsTests
 {
     [Fact]
-    public void DefaultOptions_HaveExpectedValues()
+    public void DefaultOptions_AreUnset()
     {
         var options = new PersistenceOptions();
 
-        Assert.Equal(30, options.CommandTimeoutSeconds);
-        Assert.Equal(5, options.MaxRetryCount);
+        Assert.Null(options.CommandTimeoutSeconds);
+        Assert.Null(options.MaxRetryCount);
     }
 
     [Fact]
