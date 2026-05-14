@@ -60,7 +60,6 @@ public class PersistenceRegistrationTests
             .Build();
 
         var services = new ServiceCollection();
-        services.Configure<PersistenceOptions>(configuration.GetSection("Persistence"));
         services.AddPersistence(configuration);
 
         using var provider = services.BuildServiceProvider();

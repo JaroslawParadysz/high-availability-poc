@@ -8,6 +8,11 @@ public static class PersistenceServiceCollectionExtensions
 {
     public static IServiceCollection AddPersistence(this IServiceCollection services, IConfiguration configuration)
     {
+        services.Configure<PersistenceOptions>(configuration.GetSection("Persistence"));
+        services.AddOptions<PersistenceOptions>()
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         services.AddSingleton(_ =>
         {
             var connectionString = configuration.GetConnectionString("Postgres")
