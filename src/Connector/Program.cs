@@ -1,8 +1,6 @@
 using Connector;
 using Connector.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using Npgsql;
 
 IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((context, services) =>
@@ -14,23 +12,7 @@ IHost host = Host.CreateDefaultBuilder(args)
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        services.AddSingleton(_ =>
-        {
-            var connectionString = context.Configuration.GetConnectionString("Postgres")
-                ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
-
-            var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-            return dataSourceBuilder.Build();
-        });
-
-        services.AddDbContext<ConnectorDbContext>((serviceProvider, options) =>
-        {
-            var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
-
-            options
-                .UseNpgsql(dataSource)
-                .UseSnakeCaseNamingConvention();
-        });
+        services.AddPersistence(context.Configuration);
 
         // Infrastructure: Connection provider with retry policy (Polly).
         services.AddSingleton<IRabbitMqConnectionProvider, RabbitMqConnectionProvider>();
