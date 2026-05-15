@@ -17,8 +17,8 @@ IHost host = Host.CreateDefaultBuilder(args)
         // Infrastructure: Connection provider with retry policy (Polly).
         services.AddSingleton<IRabbitMqConnectionProvider, RabbitMqConnectionProvider>();
 
-        // Business Logic: Message handler (implement with your consume → persist → publish logic).
-        services.AddSingleton<IMessageHandler, DefaultMessageHandler>();
+        // Business Logic: Message handler — persists every consumed message to communication_log.
+        services.AddSingleton<IMessageHandler, CommunicationLogHandler>();
 
         // Setup: Queue initialization (runs once at startup before consumer starts).
         services.AddHostedService<RabbitMqQueueSetupService>();
