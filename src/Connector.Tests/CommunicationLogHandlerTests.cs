@@ -1,7 +1,10 @@
+using Connector.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Xunit;
 
@@ -36,6 +39,41 @@ public class CommunicationLogHandlerTests
     {
         public FakeTransientNpgsqlException() : base("Simulated transient DB error") { }
         public override bool IsTransient => true;
+    }
+
+    [Fact]
+    public async Task HandleAsync_PersistsProcessedStatus_WhenMessageHandledSuccessfully()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        connection.CreateFunction("now", () => DateTime.UtcNow.ToString("O"));
+
+        var services = new ServiceCollection();
+        services.AddDbContext<ConnectorDbContext>(options => options.UseSqlite(connection));
+
+        using var provider = services.BuildServiceProvider();
+
+        using (var setupScope = provider.CreateScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<ConnectorDbContext>();
+            await setupDb.Database.EnsureCreatedAsync();
+        }
+
+        var handler = new CommunicationLogHandler(
+            _mockLogger.Object,
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            _options);
+
+        var correlationId = Guid.NewGuid().ToString();
+
+        await handler.HandleAsync("body", correlationId, CancellationToken.None);
+
+        using var assertScope = provider.CreateScope();
+        var assertDb = assertScope.ServiceProvider.GetRequiredService<ConnectorDbContext>();
+
+        var row = await assertDb.CommunicationLogs.SingleAsync();
+        Assert.Equal(Guid.Parse(correlationId), row.CorrelationId);
+        Assert.Equal("processed", row.Status);
     }
 
     [Fact]
