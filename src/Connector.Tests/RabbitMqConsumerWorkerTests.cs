@@ -370,6 +370,7 @@ public class RabbitMqConsumerWorkerCorrelationIdTests
     private readonly Mock<IMessageHandler> _mockMessageHandler;
     private readonly Mock<IChannel> _mockChannel;
     private readonly IOptions<RabbitMqOptions> _options;
+    private readonly IOptions<PersistenceOptions> _persistenceOptions;
 
     public RabbitMqConsumerWorkerCorrelationIdTests()
     {
@@ -378,6 +379,7 @@ public class RabbitMqConsumerWorkerCorrelationIdTests
         _mockMessageHandler = new Mock<IMessageHandler>();
         _mockChannel = new Mock<IChannel>();
         _options = Options.Create(new RabbitMqOptions { QueueName = "test.queue" });
+        _persistenceOptions = Options.Create(new PersistenceOptions { MaxRetryCount = 3 });
 
         _mockChannel
             .Setup(c => c.BasicNackAsync(
@@ -391,7 +393,7 @@ public class RabbitMqConsumerWorkerCorrelationIdTests
     }
 
     private RabbitMqConsumerWorker CreateWorker() =>
-        new(_mockLogger.Object, _mockConnectionProvider.Object, _mockMessageHandler.Object, _options);
+        new(_mockLogger.Object, _mockConnectionProvider.Object, _mockMessageHandler.Object, _options, _persistenceOptions);
 
     private static BasicDeliverEventArgs BuildDeliverEventArgs(string? correlationId, ulong deliveryTag = 42)
     {
@@ -480,5 +482,104 @@ public class RabbitMqConsumerWorkerCorrelationIdTests
         _mockChannel.Verify(
             c => c.BasicAckAsync(1UL, false, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+}
+
+public class RabbitMqConsumerWorkerTransientPersistenceTests
+{
+    private readonly Mock<ILogger<RabbitMqConsumerWorker>> _mockLogger;
+    private readonly Mock<IRabbitMqConnectionProvider> _mockConnectionProvider;
+    private readonly Mock<IMessageHandler> _mockMessageHandler;
+    private readonly Mock<IChannel> _mockChannel;
+    private readonly IOptions<RabbitMqOptions> _options;
+    private readonly IOptions<PersistenceOptions> _persistenceOptions;
+
+    public RabbitMqConsumerWorkerTransientPersistenceTests()
+    {
+        _mockLogger = new Mock<ILogger<RabbitMqConsumerWorker>>();
+        _mockConnectionProvider = new Mock<IRabbitMqConnectionProvider>();
+        _mockMessageHandler = new Mock<IMessageHandler>();
+        _mockChannel = new Mock<IChannel>();
+        _options = Options.Create(new RabbitMqOptions { QueueName = "test.queue" });
+        _persistenceOptions = Options.Create(new PersistenceOptions { MaxRetryCount = 3 });
+
+        _mockChannel
+            .Setup(c => c.BasicNackAsync(
+                It.IsAny<ulong>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        _mockChannel
+            .Setup(c => c.BasicAckAsync(
+                It.IsAny<ulong>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+    }
+
+    private RabbitMqConsumerWorker CreateWorker() =>
+        new(_mockLogger.Object, _mockConnectionProvider.Object, _mockMessageHandler.Object, _options, _persistenceOptions);
+
+    private static BasicDeliverEventArgs BuildDeliverEventArgs(
+        string correlationId,
+        ulong deliveryTag,
+        IDictionary<string, object?>? headers = null)
+    {
+        var mockProperties = new Mock<IReadOnlyBasicProperties>();
+        mockProperties.Setup(p => p.CorrelationId).Returns(correlationId);
+        mockProperties.Setup(p => p.Headers).Returns(headers);
+        return new BasicDeliverEventArgs(
+            consumerTag: "test-consumer",
+            deliveryTag: deliveryTag,
+            redelivered: false,
+            exchange: "",
+            routingKey: "test.queue",
+            properties: mockProperties.Object,
+            body: Encoding.UTF8.GetBytes("test body"));
+    }
+
+    [Fact]
+    public async Task OnMessageReceivedAsync_NacksWithRequeue_WhenTransientPersistenceFailureBelowRetryCap()
+    {
+        var correlationId = Guid.NewGuid().ToString();
+        var ea = BuildDeliverEventArgs(
+            correlationId,
+            deliveryTag: 11,
+            headers: new Dictionary<string, object?> { ["x-delivery-count"] = 2 });
+        _mockMessageHandler
+            .Setup(h => h.HandleAsync(It.IsAny<string>(), correlationId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TransientPersistenceException("database timeout"));
+
+        var worker = CreateWorker();
+
+        await worker.OnMessageReceivedAsync(_mockChannel.Object, ea, CancellationToken.None);
+
+        _mockChannel.Verify(
+            c => c.BasicNackAsync(11UL, false, true, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockChannel.Verify(
+            c => c.BasicNackAsync(11UL, false, false, It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task OnMessageReceivedAsync_NacksWithoutRequeue_WhenTransientPersistenceFailureAtRetryCap()
+    {
+        var correlationId = Guid.NewGuid().ToString();
+        var ea = BuildDeliverEventArgs(
+            correlationId,
+            deliveryTag: 12,
+            headers: new Dictionary<string, object?> { ["x-delivery-count"] = 3 });
+        _mockMessageHandler
+            .Setup(h => h.HandleAsync(It.IsAny<string>(), correlationId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TransientPersistenceException("database timeout"));
+
+        var worker = CreateWorker();
+
+        await worker.OnMessageReceivedAsync(_mockChannel.Object, ea, CancellationToken.None);
+
+        _mockChannel.Verify(
+            c => c.BasicNackAsync(12UL, false, false, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockChannel.Verify(
+            c => c.BasicNackAsync(12UL, false, true, It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }
